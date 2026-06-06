@@ -1,0 +1,25 @@
+name = "tower-stack"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Durable Object: one instance per game room. Hibernates between events to
+# keep costs near zero when nobody is actively manipulating the tower.
+[[durable_objects.bindings]]
+name = "GAME_ROOM"
+class_name = "GameRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameRoom"]
+
+# Local-dev port. `npm run dev:server` will publish ws://127.0.0.1:8787.
+[dev]
+port = 8787
+local_protocol = "http"
+
+# Static assets — the worker serves the built client so a single
+# `wrangler deploy` ships both halves.
+[assets]
+directory = "../client/dist"
+binding = "ASSETS"

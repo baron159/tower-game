@@ -1,0 +1,37 @@
+{
+  "name": "tower-stack",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tower Stack — a card-driven dexterity stacking game with Cloudflare-powered online multiplayer.",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:client dev:server",
+    "dev:client": "npm --workspace client run dev",
+    "dev:server": "npm --workspace server run dev",
+    "build": "npm-run-all build:client build:server",
+    "build:client": "npm --workspace client run build",
+    "build:server": "npm --workspace server run build",
+    "deploy:server": "npm --workspace server run deploy",
+    "preview": "npm --workspace client run preview",
+    "typecheck": "npm-run-all --parallel typecheck:client typecheck:server",
+    "typecheck:client": "npm --workspace client run typecheck",
+    "typecheck:server": "npm --workspace server run typecheck",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "smoke": "node scripts/smoke_test.mjs",
+    "icons": "python3 scripts/gen_icons.py"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.6.3",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
