@@ -22,6 +22,10 @@ export interface PhysicsHandles {
   snapshot(): BlockSnapshot[];
   blockHasFallen(blockId: number): boolean;
   anyBlockFloorContact(): boolean;
+  // Highest dynamic-block top surface — used to compute the hover plane so
+  // a held block sits just above the current tower instead of metres in the
+  // air.
+  topSurfaceY(): number;
 }
 
 // Deterministic supply-grid layout. Each block gets its own cell well clear
@@ -111,10 +115,22 @@ export async function createPhysics(blockDefs: BlockDef[]): Promise<PhysicsHandl
     if (b.bodyType() !== RAPIER.RigidBodyType.KinematicPositionBased) {
       b.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
     }
+    // Make every collider on this body a sensor while it's held — otherwise
+    // sweeping the kinematic block through the tower area to position it
+    // would push the dynamic tower blocks aside and topple them. Sensors
+    // generate intersection events but no contact forces.
+    for (let i = 0; i < b.numColliders(); i++) {
+      b.collider(i).setSensor(true);
+    }
   }
 
   function releaseAt(blockId: number, pos: THREE.Vector3, quat: THREE.Quaternion) {
     const b = bodies[blockId];
+    // Re-solidify before going dynamic, otherwise the drop would be a no-op
+    // physically (sensors don't collide).
+    for (let i = 0; i < b.numColliders(); i++) {
+      b.collider(i).setSensor(false);
+    }
     b.setTranslation({ x: pos.x, y: pos.y, z: pos.z }, true);
     b.setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w }, true);
     if (b.bodyType() !== RAPIER.RigidBodyType.Dynamic) {
@@ -129,6 +145,11 @@ export async function createPhysics(blockDefs: BlockDef[]): Promise<PhysicsHandl
     for (const s of snap) {
       const b = bodies[s.id];
       if (!b) continue;
+      // Always restore solid colliders — pickUp() may have left this body
+      // sensored. Cancel / rematch paths rely on applySnapshot to reset.
+      for (let i = 0; i < b.numColliders(); i++) {
+        b.collider(i).setSensor(false);
+      }
       if (s.placed) {
         // On the tower — dynamic so it can wobble and fall.
         if (b.bodyType() !== RAPIER.RigidBodyType.Dynamic) {
@@ -194,9 +215,24 @@ export async function createPhysics(blockDefs: BlockDef[]): Promise<PhysicsHandl
     return false;
   }
 
+  function topSurfaceY(): number {
+    // Start at the stand top so the very first block has a real target.
+    let max = 0.27;
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      if (!b.isDynamic()) continue; // skip parked + held
+      const t = b.translation();
+      if (t.y < -0.5) continue;
+      const def = blockDefs[i];
+      const top = t.y + def.hy;
+      if (top > max) max = top;
+    }
+    return max;
+  }
+
   return {
     world, bodies, groundBody, standBody,
     step, syncMeshes, pickUp, releaseAt, applySnapshot, snapshot,
-    blockHasFallen, anyBlockFloorContact,
+    blockHasFallen, anyBlockFloorContact, topSurfaceY,
   };
 }

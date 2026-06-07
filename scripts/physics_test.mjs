@@ -127,14 +127,34 @@ for (let i = 0; i < BASE.length; i++) {
   assert.ok(t.y < 1.5, `base block ${i} flew off, y=${t.y}`);
 }
 
-// Verify a placed-then-dropped block on the table DOES eventually trigger.
-const dropId = 4;
-const drop = bodies[dropId];
-drop.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
-drop.setTranslation({ x: 2.5, y: 1.5, z: 2.5 }, false); // off the stand
-drop.setLinvel({ x: 0, y: 0, z: 0 }, true);
-drop.setAngvel({ x: 0, y: 0, z: 0 }, true);
-drop.wakeUp();
+// --- Sensor-mode pickup must not disturb the tower ---
+// Sweep a held kinematic block (with sensor colliders) horizontally through
+// the tower volume — the dynamic base blocks should stay put.
+const heldId = 4;
+const held = bodies[heldId];
+// Mirror Physics.pickUp(): make colliders sensors, body kinematic.
+for (let i = 0; i < held.numColliders(); i++) held.collider(i).setSensor(true);
+// Held block is already kinematic from createPhysics().
+const baseTopsBefore = BASE.map((id) => bodies[id].translation().y);
+for (let frame = 0; frame < 60; frame++) {
+  // Move the held block on a horizontal line straight through the tower.
+  const x = -1 + (frame / 30); // -1 to +1 over a second
+  held.setNextKinematicTranslation({ x, y: 1.2, z: 0 });
+  world.step();
+}
+const baseTopsAfter = BASE.map((id) => bodies[id].translation().y);
+for (let i = 0; i < BASE.length; i++) {
+  const delta = Math.abs(baseTopsAfter[i] - baseTopsBefore[i]);
+  assert.ok(delta < 0.05, `held sensor sweep displaced base block ${i} by ${delta.toFixed(3)}m`);
+}
+
+// --- Restore solid colliders and verify a real off-stand drop still triggers ---
+for (let i = 0; i < held.numColliders(); i++) held.collider(i).setSensor(false);
+held.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+held.setTranslation({ x: 2.5, y: 1.5, z: 2.5 }, false);
+held.setLinvel({ x: 0, y: 0, z: 0 }, true);
+held.setAngvel({ x: 0, y: 0, z: 0 }, true);
+held.wakeUp();
 let trueCollapse = false;
 for (let frame = 0; frame < 180; frame++) {
   world.step();
@@ -142,4 +162,4 @@ for (let frame = 0; frame < 180; frame++) {
 }
 assert.ok(trueCollapse, "off-stand drop should eventually be detected as a collapse");
 
-console.log("OK — no false collapse on init, true collapse detected on off-stand drop");
+console.log("OK — init clean, held sensor doesn't shove tower, off-stand drop still detected");

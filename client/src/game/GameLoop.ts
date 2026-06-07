@@ -236,10 +236,15 @@ export async function startGameLoop(opts: {
   function pickUp(blockId: number) {
     primeAudio();
     sfx.blockPickup();
+    const def = render.blockDefs[blockId];
+    // Hover the held block just above the current tower top so dropping it
+    // is a tiny fall, not a 60 cm plunge. Need to add the block's own
+    // half-height (so its underside, not its centre, is what's above the
+    // top) plus a small clearance for the pickup-time teleport.
     held = {
       blockId,
       yaw: 0,
-      hoverHeight: estimateTopHeight() + 0.6,
+      hoverHeight: physics.topSurfaceY() + def.hy + 0.05,
     };
     physics.pickUp(blockId);
   }
@@ -288,14 +293,6 @@ export async function startGameLoop(opts: {
     }
     net.send({ t: "resolveCard", cardId: state.activeCard.id, blocks: physics.snapshot() });
     stableFrames = 0;
-  }
-
-  function estimateTopHeight(): number {
-    let max = 0.3;
-    for (const s of state.blocks) {
-      if (s.placed && s.y > max) max = s.y;
-    }
-    return max;
   }
 
   function allBlocksStable(): boolean {
