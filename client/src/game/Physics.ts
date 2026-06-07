@@ -24,6 +24,14 @@ export interface PhysicsHandles {
   anyBlockFloorContact(): boolean;
 }
 
+// Deterministic supply-grid layout. Each block gets its own cell well clear
+// of any other body or static collider so kinematic siblings never overlap.
+export function parkedGridPos(id: number): { x: number; y: number; z: number } {
+  const col = id % 8;
+  const row = Math.floor(id / 8);
+  return { x: (col - 3.5) * 1.4, y: -3, z: (row - 1.5) * 1.4 };
+}
+
 let initPromise: Promise<void> | null = null;
 export function ensureRapier(): Promise<void> {
   if (!initPromise) initPromise = RAPIER.init();
@@ -40,7 +48,7 @@ export async function createPhysics(blockDefs: BlockDef[]): Promise<PhysicsHandl
   // Static ground (the table). Slightly above y=0 so block fall = floor touch.
   const groundDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.05, 0);
   const groundBody = world.createRigidBody(groundDesc);
-  world.createCollider(
+  const groundCollider = world.createCollider(
     RAPIER.ColliderDesc.cuboid(20, 0.05, 20)
       .setRestitution(0.0)
       .setFriction(0.9),
@@ -61,13 +69,17 @@ export async function createPhysics(blockDefs: BlockDef[]): Promise<PhysicsHandl
     standBody,
   );
 
-  // One dynamic body per block. We start them dynamic but parked off-stage
-  // (y = -2 below the table) — they won't collide with anything until the
-  // server snapshot positions them.
+  // One body per block. Unplaced blocks are KINEMATIC and parked on a wide
+  // grid below the table — if we instead spawned them all dynamic at the
+  // same (0,-2,0) point, Rapier's first-step penetration correction would
+  // explode them apart and some would tunnel up into the play area,
+  // tripping the collapse detector before the player ever did anything.
+  // Switching to dynamic happens lazily inside releaseAt() / applySnapshot().
   const bodies: RAPIER.RigidBody[] = [];
   for (const def of blockDefs) {
-    const desc = RAPIER.RigidBodyDesc.dynamic()
-      .setTranslation(0, -2, 0)
+    const grid = parkedGridPos(def.id);
+    const desc = RAPIER.RigidBodyDesc.kinematicPositionBased()
+      .setTranslation(grid.x, grid.y, grid.z)
       .setCanSleep(true)
       .setLinearDamping(0.25)
       .setAngularDamping(0.6);
@@ -77,7 +89,6 @@ export async function createPhysics(blockDefs: BlockDef[]): Promise<PhysicsHandl
       .setRestitution(0.02)
       .setDensity(1.4);
     world.createCollider(col, body);
-    body.sleep();
     bodies.push(body);
   }
 
@@ -95,17 +106,22 @@ export async function createPhysics(blockDefs: BlockDef[]): Promise<PhysicsHandl
 
   function pickUp(blockId: number) {
     const b = bodies[blockId];
-    // Switch to kinematic position-based so the player can drag it.
-    b.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
-    b.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    b.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    // Ensure kinematic so the player drives its position. A placed block
+    // was dynamic; a parked block was already kinematic.
+    if (b.bodyType() !== RAPIER.RigidBodyType.KinematicPositionBased) {
+      b.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+    }
   }
 
   function releaseAt(blockId: number, pos: THREE.Vector3, quat: THREE.Quaternion) {
     const b = bodies[blockId];
     b.setTranslation({ x: pos.x, y: pos.y, z: pos.z }, true);
     b.setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w }, true);
-    b.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    if (b.bodyType() !== RAPIER.RigidBodyType.Dynamic) {
+      b.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    }
+    b.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    b.setAngvel({ x: 0, y: 0, z: 0 }, true);
     b.wakeUp();
   }
 
@@ -113,11 +129,27 @@ export async function createPhysics(blockDefs: BlockDef[]): Promise<PhysicsHandl
     for (const s of snap) {
       const b = bodies[s.id];
       if (!b) continue;
-      b.setTranslation({ x: s.x, y: s.y, z: s.z }, false);
-      b.setRotation({ x: s.qx, y: s.qy, z: s.qz, w: s.qw }, false);
-      b.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      b.setAngvel({ x: 0, y: 0, z: 0 }, true);
-      if (s.placed) { b.wakeUp(); } else { b.sleep(); }
+      if (s.placed) {
+        // On the tower — dynamic so it can wobble and fall.
+        if (b.bodyType() !== RAPIER.RigidBodyType.Dynamic) {
+          b.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+        }
+        b.setTranslation({ x: s.x, y: s.y, z: s.z }, false);
+        b.setRotation({ x: s.qx, y: s.qy, z: s.qz, w: s.qw }, false);
+        b.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        b.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        b.wakeUp();
+      } else {
+        // Parked supply — kinematic at the deterministic grid cell. We
+        // ignore the snapshot position (the server uses y=-2 sentinel) and
+        // route to our own grid so siblings never collide.
+        if (b.bodyType() !== RAPIER.RigidBodyType.KinematicPositionBased) {
+          b.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+        }
+        const g = parkedGridPos(s.id);
+        b.setTranslation(g, false);
+        b.setRotation({ x: 0, y: 0, z: 0, w: 1 }, false);
+      }
     }
   }
 
@@ -140,16 +172,24 @@ export async function createPhysics(blockDefs: BlockDef[]): Promise<PhysicsHandl
   function blockHasFallen(blockId: number): boolean {
     const b = bodies[blockId];
     const t = b.translation();
-    return t.y < 0.05; // a placed block touching the table top
+    return t.y < 0.05;
   }
 
   function anyBlockFloorContact(): boolean {
+    // Use Rapier's narrow-phase contact info rather than a y-threshold —
+    // the threshold approach mis-fires on the brief penetration-correction
+    // overshoot that happens when a block first touches a static collider.
+    // A dynamic block touching the ground collider = it fell off the tower.
     for (let i = 0; i < bodies.length; i++) {
       const b = bodies[i];
       if (!b.isDynamic()) continue;
-      const t = b.translation();
-      if (t.y < -0.5) continue; // parked, ignore
-      if (t.y < 0.06) return true; // it hit the table
+      if (b.numColliders() === 0) continue;
+      const blockCollider = b.collider(0);
+      let touching = false;
+      world.contactPair(groundCollider, blockCollider, (manifold, _flipped) => {
+        if (manifold.numContacts() > 0) touching = true;
+      });
+      if (touching) return true;
     }
     return false;
   }

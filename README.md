@@ -93,6 +93,16 @@ npm run smoke
 Spins up two WebSocket clients, runs through a join → start → draw cycle,
 asserts that the spectator sees the same deck count as the active player.
 
+### Physics regression test
+
+Runs headless against Rapier — verifies the initial tower set-up doesn't
+mis-fire the collapse detector and that a block dropped off-stand still
+does:
+
+```sh
+npm run test:physics
+```
+
 ---
 
 ## 3) Build for production (web only)

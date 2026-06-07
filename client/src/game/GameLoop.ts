@@ -65,9 +65,15 @@ export async function startGameLoop(opts: {
   net.on("state", (msg) => {
     const prevPhase = state.phase;
     state = msg.state;
-    // Apply remote state to physics only when we're not the active player —
-    // the active player's own client is the source of truth for blocks.
-    if (state.currentTurnPlayerId !== me.id) {
+    // Apply the server's canonical block layout unless I'm in the middle of
+    // resolving a build/move card. Earlier we only skipped this on "my turn"
+    // unconditionally, which meant the active player never received the
+    // initial base-block placement and was running with an empty tower.
+    const iAmHoldingOrSettling =
+      state.currentTurnPlayerId === me.id &&
+      !!state.activeCard &&
+      (state.activeCard.kind === "build" || state.activeCard.kind === "move");
+    if (!iAmHoldingOrSettling) {
       physics.applySnapshot(state.blocks);
     }
     if (state.phase === "playing" && state.currentTurnPlayerId === me.id && !state.activeCard) {
@@ -174,8 +180,12 @@ export async function startGameLoop(opts: {
       else stableFrames = 0;
     }
 
-    // Collapse detection — only the active player reports it.
-    if (state.phase === "playing" && state.currentTurnPlayerId === me.id && !collapseReported) {
+    // Collapse detection — only the active player reports it. We require
+    // the player to have actually started a turn (drawn at least one card)
+    // before any collapse can be attributed to them; otherwise an early
+    // physics hiccup right after game-start could end the round.
+    const hasManipulated = !!state.activeCard || stableFrames > 0;
+    if (state.phase === "playing" && state.currentTurnPlayerId === me.id && !collapseReported && hasManipulated) {
       if (physics.anyBlockFloorContact()) {
         collapseReported = true;
         net.send({ t: "reportCollapse", blocks: physics.snapshot() });

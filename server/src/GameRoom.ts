@@ -332,11 +332,14 @@ export class GameRoom implements DurableObject {
       placed: false,
     }));
     // Place the first 3 slabs on the stand so there's something to balance on.
-    const base = [0, 3, 6]; // first three slab indices in the deterministic catalogue
+    // Stand top sits at y = 0.27 (cylinder at y=0.24 with half-height 0.03).
+    // Each slab has half-height 0.13, so consecutive y values clear of
+    // interpenetration are 0.40, 0.66, 0.92 (touching but not overlapping).
+    const base = BASE_BLOCK_IDS; // canonical slab base
     base.forEach((i, idx) => {
       const b = this.room!.blocks[i];
       b.x = 0;
-      b.y = 0.3 + idx * 0.27;
+      b.y = 0.40 + idx * 0.26;
       b.z = 0;
       b.placed = true;
     });
@@ -442,10 +445,17 @@ export class GameRoom implements DurableObject {
   }
 }
 
+// Three slabs pre-placed on the stand at game-start.
+const BASE_BLOCK_IDS: ReadonlyArray<number> = [0, 3, 6];
+
 // Fisher–Yates with crypto randomness so a clever client can't predict the deck.
 function buildShuffledDeck(size: number): Card[] {
   const cards: Card[] = [];
   const blocks = buildBlockCatalogue();
+  // Build cards only address blocks that aren't already on the stand —
+  // otherwise the active player would draw a card pointing at a block that
+  // can't be picked up.
+  const eligible = blocks.filter((b) => !BASE_BLOCK_IDS.includes(b.id));
   // Composition (44-card v2 deck): 28 build, 8 move, 4 skip, 4 draw2.
   const buildCount = Math.floor(size * 0.63);
   const moveCount = Math.floor(size * 0.18);
@@ -453,7 +463,7 @@ function buildShuffledDeck(size: number): Card[] {
   const draw2Count = size - buildCount - moveCount - skipCount;
   const push = (kind: CardKind, idx: number) =>
     cards.push({ id: crypto.randomUUID(), kind, blockIndex: idx });
-  for (let i = 0; i < buildCount; i++) push("build", i % blocks.length);
+  for (let i = 0; i < buildCount; i++) push("build", eligible[i % eligible.length].id);
   for (let i = 0; i < moveCount; i++) push("move", -1);
   for (let i = 0; i < skipCount; i++) push("skip", -1);
   for (let i = 0; i < draw2Count; i++) push("draw2", -1);
